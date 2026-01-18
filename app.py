@@ -3,33 +3,46 @@ import urllib3
 import json
 import base64
 import time
-from flask import Flask, request, jsonify, render_template_string, redirect
+import binascii
+import jwt  # PyJWT
+from flask import Flask, request, jsonify, render_template_string, redirect, make_response
+from flask_cors import CORS
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
 
+# Try importing external protobufs if they exist (for Major Login)
+try:
+    import my_pb2
+    import output_pb2
+except ImportError:
+    pass
+
 app = Flask(__name__)
+# Enable CORS for all routes
+CORS(app)
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==========================================
-# 1. CONFIGURATION (ORIGINAL METHOD)
+# 1. CONFIGURATION & CONSTANTS
 # ==========================================
-KEY = b'Yg&tc%DEuh6%Zc^8'
-IV = b'6oyZDr22E3ychjM%'
-API_BASE = "https://raihan-access-to-jwt.vercel.app/token"
+KEY = b'Yg&tc%DEuh6%Zc^8'  # Same key in both scripts
+IV = b'6oyZDr22E3ychjM%'   # Same IV in both scripts
 
+# --- Legacy Config (For UI / long_bio) ---
+API_BASE = "https://raihan-access-to-jwt.vercel.app/token"
 HEADERS_GAME = {
     'User-Agent': 'Dalvik/2.1.0 (Linux; U; Android 14; SM-S918B Build/UP1A.231005.007)',
     'Connection': 'Keep-Alive',
     'Expect': '100-continue',
     'X-Unity-Version': '2018.4.11f1', 
     'X-GA': 'v1 1',
-    'ReleaseVersion': 'OB53',
+    'ReleaseVersion': 'OB52',
     'Content-Type': 'application/x-www-form-urlencoded',
 }
-
 SERVERS = {
     "IND": "https://client.ind.freefiremobile.com/UpdateSocialBasicInfo",
     "BD":  "https://clientbp.ggblueshark.com/UpdateSocialBasicInfo",
@@ -39,9 +52,38 @@ SERVERS = {
     "EU":  "https://clientbp.ggpolarbear.com/UpdateSocialBasicInfo",
 }
 
+# --- New Config (For /bio endpoint) ---
+FREEFIRE_UPDATE_URL = "https://client.ind.freefiremobile.com/UpdateSocialBasicInfo"
+MAJOR_LOGIN_URL = "https://loginbp.ggblueshark.com/MajorLogin"
+OAUTH_URL = "https://100067.connect.garena.com/oauth/guest/token/grant"
+FREEFIRE_VERSION = "OB52"
+
+BIO_HEADERS = {
+    "Expect": "100-continue",
+    "X-Unity-Version": "2018.4.11f1",
+    "X-GA": "v1 1",
+    "ReleaseVersion": FREEFIRE_VERSION,
+    "Content-Type": "application/x-www-form-urlencoded",
+    "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 11; SM-A305F Build/RP1A.200720.012)",
+    "Connection": "Keep-Alive",
+    "Accept-Encoding": "gzip",
+}
+
+LOGIN_HEADERS = {
+    "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 9; ASUS_Z01QD Build/PI)",
+    "Connection": "Keep-Alive",
+    "Accept-Encoding": "gzip",
+    "Content-Type": "application/octet-stream",
+    "Expect": "100-continue",
+    "X-Unity-Version": "2018.4.11f1",
+    "X-GA": "v1 1",
+    "ReleaseVersion": FREEFIRE_VERSION
+}
+
 # ==========================================
 # 2. PROTOBUF SETUP
 # ==========================================
+# Dynamic BioData setup (Works for both legacy and new logic)
 try:
     _sym_db = _symbol_database.Default()
     BIO_PROTO = b'\n\ndata.proto\"\xbb\x01\n\x04\x44\x61ta\x12\x0f\n\x07\x66ield_2\x18\x02 \x01(\x05\x12\x1e\n\x07\x66ield_5\x18\x05 \x01(\x0b\x32\r.EmptyMessage\x12\x1e\n\x07\x66ield_6\x18\x06 \x01(\x0b\x32\r.EmptyMessage\x12\x0f\n\x07\x66ield_8\x18\x08 \x01(\t\x12\x0f\n\x07\x66ield_9\x18\t \x01(\x05\x12\x1f\n\x08\x66ield_11\x18\x0b \x01(\x0b\x32\r.EmptyMessage\x12\x1f\n\x08\x66ield_12\x18\x0c \x01(\x0b\x32\r.EmptyMessage\"\x0e\n\x0c\x45mptyMessageb\x06proto3'
@@ -53,14 +95,22 @@ except:
     pass
 
 # ==========================================
-# 3. HELPERS
+# 3. COMMON HELPERS
 # ==========================================
 def encrypt_aes(data_bytes):
+    """Legacy helper"""
     cipher = AES.new(KEY, AES.MODE_CBC, IV)
     padded = pad(data_bytes, AES.block_size)
     return cipher.encrypt(padded)
 
-def extract_info(token):
+def encrypt_data(data_bytes):
+    """New helper (Identical logic)"""
+    return encrypt_aes(data_bytes)
+
+# ==========================================
+# 4. LEGACY LOGIC (For UI & /long_bio)
+# ==========================================
+def extract_info_legacy(token):
     try:
         if not token: return "Unknown", "Unknown"
         payload = token.split('.')[1]
@@ -84,9 +134,6 @@ def get_jwt_from_api(uid=None, password=None, access_token=None):
     except:
         return None, "Auth API Error"
 
-# ==========================================
-# 4. CORE LOGIC
-# ==========================================
 def update_bio_request(jwt_token, bio_text, region):
     url = SERVERS.get(region, SERVERS["IND"])
     try:
@@ -109,25 +156,195 @@ def update_bio_request(jwt_token, bio_text, region):
         return 500
 
 # ==========================================
-# 5. ROUTES
+# 5. NEW LOGIC (For /bio Endpoint)
+# ==========================================
+def get_name_region_from_reward(access_token):
+    try:
+        uid_url = "https://prod-api.reward.ff.garena.com/redemption/api/auth/inspect_token/"
+        uid_headers ={
+            "authority": "prod-api.reward.ff.garena.com",
+            "method": "GET",
+            "path": "/redemption/api/auth/inspect_token/",
+            "scheme": "https",
+            "accept": "application/json, text/plain, */*",
+            "accept-encoding": "gzip, deflate, br",
+            "access-token": access_token,
+            "origin": "https://reward.ff.garena.com",
+            "referer": "https://reward.ff.garena.com/",
+            "user-agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        }
+        uid_res = requests.get(uid_url, headers=uid_headers, verify=False)
+        uid_data = uid_res.json()
+        
+        return uid_data.get("uid"), uid_data.get("name"), uid_data.get("region")
+    except Exception as e:
+        return None, None, None
+
+def get_openid_from_shop2game(uid):
+    if not uid: return None
+    try:
+        openid_url = "https://topup.pk/api/auth/player_id_login"
+        openid_headers = { 
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "Origin": "https://topup.pk",
+            "Referer": "https://topup.pk/",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 15; RMX5070 Build/UKQ1.231108.001) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.7204.157 Mobile Safari/537.36",
+        }
+        payload = {"app_id": 100067, "login_id": str(uid)}
+        res = requests.post(openid_url, headers=openid_headers, json=payload, verify=False)
+        data = res.json()
+        return data.get("open_id")
+    except Exception as e:
+        return None
+
+def decode_jwt_info(token):
+    try:
+        decoded = jwt.decode(token, options={"verify_signature": False})
+        name = decoded.get("nickname")
+        region = decoded.get("lock_region") 
+        uid = decoded.get("account_id")
+        return str(uid), name, region
+    except:
+        return None, None, None
+
+def perform_major_login(access_token, open_id):
+    # This requires my_pb2 and output_pb2 to be present in the directory
+    try:
+        import my_pb2
+        import output_pb2
+    except ImportError:
+        print("Protobuf modules (my_pb2, output_pb2) not found. Major Login will fail.")
+        return None
+
+    platforms = [8, 3, 4, 6]
+    for platform_type in platforms:
+        try:
+            game_data = my_pb2.GameData()
+            game_data.timestamp = "2024-12-05 18:15:32"
+            game_data.game_name = "free fire"
+            game_data.game_version = 1
+            game_data.version_code = "1.120.2"
+            game_data.os_info = "Android OS 9 / API-28 (PI/rel.cjw.20220518.114133)"
+            game_data.device_type = "Handheld"
+            game_data.network_provider = "Verizon Wireless"
+            game_data.connection_type = "WIFI"
+            game_data.screen_width = 1280
+            game_data.screen_height = 960
+            game_data.dpi = "240"
+            game_data.cpu_info = "ARMv7 VFPv3 NEON VMH | 2400 | 4"
+            game_data.total_ram = 5951
+            game_data.gpu_name = "Adreno (TM) 640"
+            game_data.gpu_version = "OpenGL ES 3.0"
+            game_data.user_id = "Google|74b585a9-0268-4ad3-8f36-ef41d2e53610"
+            game_data.ip_address = "172.190.111.97"
+            game_data.language = "en"
+            game_data.open_id = open_id
+            game_data.access_token = access_token
+            game_data.platform_type = platform_type
+            game_data.field_99 = str(platform_type)
+            game_data.field_100 = str(platform_type)
+
+            serialized_data = game_data.SerializeToString()
+            encrypted = encrypt_data(serialized_data)
+            hex_encrypted = binascii.hexlify(encrypted).decode('utf-8')
+            
+            edata = bytes.fromhex(hex_encrypted)
+            response = requests.post(MAJOR_LOGIN_URL, data=edata, headers=LOGIN_HEADERS, verify=False, timeout=10)
+
+            if response.status_code == 200:
+                data_dict = None
+                try:
+                    example_msg = output_pb2.Garena_420()
+                    example_msg.ParseFromString(response.content)
+                    data_dict = {field.name: getattr(example_msg, field.name) 
+                                 for field in example_msg.DESCRIPTOR.fields 
+                                 if field.name == "token"}
+                except Exception:
+                    pass
+                if data_dict and "token" in data_dict:
+                    return data_dict["token"]
+        except Exception:
+            continue
+    return None
+
+def perform_guest_login(uid, password):
+    payload = {
+        'uid': uid,
+        'password': password,
+        'response_type': "token",
+        'client_type': "2",
+        'client_secret': "2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3",
+        'client_id': "100067"
+    }
+    headers = {
+        'User-Agent': "GarenaMSDK/4.0.19P9(SM-M526B ;Android 13;pt;BR;)",
+        'Connection': "Keep-Alive"
+    }
+    try:
+        resp = requests.post(OAUTH_URL, data=payload, headers=headers, timeout=10, verify=False)
+        data = resp.json()
+        if 'access_token' in data:
+            return data['access_token'], data.get('open_id')
+    except Exception as e:
+        pass
+    return None, None
+
+def upload_bio_request_new(jwt_token, bio_text):
+    try:
+        data = BioData()
+        data.field_2 = 17
+        data.field_5.CopyFrom(EmptyMessage())
+        data.field_6.CopyFrom(EmptyMessage())
+        data.field_8 = bio_text
+        data.field_9 = 1
+        data.field_11.CopyFrom(EmptyMessage())
+        data.field_12.CopyFrom(EmptyMessage())
+
+        data_bytes = data.SerializeToString()
+        encrypted = encrypt_data(data_bytes)
+
+        headers = BIO_HEADERS.copy()
+        headers["Authorization"] = f"Bearer {jwt_token}"
+
+        resp = requests.post(FREEFIRE_UPDATE_URL, headers=headers, data=encrypted, timeout=20, verify=False)
+
+        status_text = "Unknown"
+        if resp.status_code == 200: status_text = "✅ Success"
+        elif resp.status_code == 401: status_text = "❌ Unauthorized (Invalid JWT)"
+        else: status_text = f"⚠️ Status {resp.status_code}"
+
+        raw_hex = binascii.hexlify(resp.content).decode('utf-8')
+
+        return {
+            "status": status_text,
+            "code": resp.status_code,
+            "bio": bio_text,
+            "server_response": raw_hex
+        }
+    except Exception as e:
+        return {"status": f"Error: {str(e)}", "code": 500, "bio": bio_text, "server_response": "N/A"}
+
+# ==========================================
+# 6. ROUTES
 # ==========================================
 
-# MAIN PAGE -> REDIRECT TO TOOL
+# --- MAIN PAGE -> REDIRECT TO TOOL ---
 @app.route('/')
 def root():
     return """<script>window.location.replace('/security');</script>"""
 
-# TOOL UI
+# --- TOOL UI ---
 @app.route('/security')
 def secure_app():
     return render_template_string(HTML_TOOL)
 
-# API DOCS PAGE
+# --- API DOCS PAGE ---
 @app.route('/api')
 def api_docs():
     return render_template_string(HTML_API_DOCS)
 
-# TOOL EXECUTION (UI POST)
+# --- TOOL EXECUTION (UI POST - LEGACY) ---
 @app.route('/exec', methods=['POST'])
 def execute_web():
     try:
@@ -152,7 +369,7 @@ def execute_web():
         code = update_bio_request(jwt_token, bio, region)
         
         if code == 200:
-            uid, name = extract_info(jwt_token)
+            uid, name = extract_info_legacy(jwt_token)
             return jsonify({
                 "ok": True, 
                 "msg": "Bio Updated Successfully", 
@@ -167,7 +384,7 @@ def execute_web():
     except:
         return jsonify({"ok": False, "msg": "Server Error"})
 
-# PUBLIC API ENDPOINT
+# --- PUBLIC API ENDPOINT (LEGACY) ---
 @app.route('/long_bio', methods=['GET'])
 def public_api():
     try:
@@ -189,7 +406,7 @@ def public_api():
         
         code = update_bio_request(final_jwt, bio, reg)
         if code == 200:
-            uid_val, name_val = extract_info(final_jwt)
+            uid_val, name_val = extract_info_legacy(final_jwt)
             return jsonify({
                 "status": "success", 
                 "message": "Bio Updated", 
@@ -201,6 +418,103 @@ def public_api():
             return jsonify({"status": "error", "message": "Failed", "code": code})
     except:
         return jsonify({"status": "error", "message": "Server Error"})
+
+# --- NEW PUBLIC API ENDPOINT (/bio) ---
+@app.route("/bio", methods=["GET", "POST"])
+def combined_bio_upload():
+    bio = request.args.get("bio") or request.form.get("bio")
+    jwt_token = request.args.get("jwt") or request.form.get("jwt")
+    uid = request.args.get("uid") or request.form.get("uid")
+    password = request.args.get("pass") or request.form.get("pass")
+    access_token = request.args.get("access") or request.form.get("access") or request.args.get("access_token")
+
+    if not bio:
+        return jsonify({"status": "❌ Error", "code": 400, "error": "Missing 'bio' parameter"}), 400
+
+    final_jwt = None
+    login_method = "Direct JWT"
+    
+    final_open_id = None
+    final_access_token = None
+    final_uid = None
+    final_name = None
+    final_region = None
+
+    if jwt_token:
+        final_jwt = jwt_token
+        j_uid, j_name, j_region = decode_jwt_info(jwt_token)
+        final_uid = j_uid
+        final_name = j_name
+        final_region = j_region
+        
+    elif uid and password:
+        login_method = "UID/Pass Login"
+        
+        acc_token, login_openid = perform_guest_login(uid, password)
+        
+        if acc_token and login_openid:
+            final_access_token = acc_token
+            final_open_id = login_openid
+            
+            final_jwt = perform_major_login(final_access_token, final_open_id)
+            
+            if final_jwt:
+                 j_uid, j_name, j_region = decode_jwt_info(final_jwt)
+                 final_uid = j_uid
+                 final_name = j_name
+                 final_region = j_region
+            else:
+                 return jsonify({"status": "❌ JWT Generation Failed", "code": 500}), 500
+
+        else:
+            return jsonify({"status": "❌ Guest Login Failed (Check UID/Pass)", "code": 401}), 401
+
+    elif access_token:
+        login_method = "Access Token Login"
+        final_access_token = access_token
+        
+        f_uid, f_name, f_region = get_name_region_from_reward(access_token)
+        final_uid = f_uid
+        final_name = f_name
+        final_region = f_region
+
+        if not final_uid:
+            return jsonify({"status": "❌ Invalid Access Token", "code": 400}), 400
+
+        final_open_id = get_openid_from_shop2game(final_uid)
+        
+        if final_open_id:
+            final_jwt = perform_major_login(access_token, final_open_id)
+        else:
+            return jsonify({"status": "❌ Shop2Game OpenID Fetch Failed", "code": 400}), 400
+    
+    else:
+        return jsonify({"status": "❌ Error", "code": 400, "error": "Provide JWT, or UID/Pass, or Access Token"}), 400
+
+    if not final_jwt:
+        return jsonify({"status": "❌ JWT Generation Failed", "code": 500}), 500
+
+    result = upload_bio_request_new(final_jwt, bio)
+    
+    response_data = {
+        "Credit": "@spidey_abd",
+        "Join For More": "Telegram: @TubeGroww",
+        "status": result["status"],
+        "login_method": login_method,
+        "code": result["code"],
+        "bio": result["bio"],
+        "uid": str(final_uid) if final_uid else None,
+        "name": final_name,
+        "region": final_region,
+        "open_id": final_open_id,
+        "access_token": final_access_token,
+        "server_response": result["server_response"],
+        "generated_jwt": final_jwt
+    }
+
+    response = make_response(jsonify(response_data))
+    response.headers["Content-Type"] = "application/json"
+    return response
 
 # ==========================================
 # UI: API DOCUMENTATION PAGE (/api)
@@ -230,47 +544,29 @@ HTML_API_DOCS = r"""
 <body>
     <div class="container">
         <h1>API Documentation</h1>
-        <p>Welcome to the Bio Injector Public API. Use the endpoint <code>/long_bio</code> to update Free Fire bios programmatically.</p>
+        <p>Welcome to the Bio Injector Public API.</p>
         
+        <h2>Standard API (Legacy)</h2>
         <div class="card">
-            <h3>Method 1: Direct JWT</h3>
             <p><span class="method">GET</span> <code>/long_bio</code></p>
             <pre><span class="host-url"></span>/long_bio?bio={bio}&jwt={jwt_token}</pre>
+            <p>Also supports: <code>&access={token}</code> or <code>&uid={uid}&password={pass}</code></p>
         </div>
 
+        <h2>Advanced API (New)</h2>
         <div class="card">
-            <h3>Method 2: Access Token</h3>
-            <p><span class="method">GET</span> <code>/long_bio</code></p>
-            <pre><span class="host-url"></span>/long_bio?bio={bio}&access={access_token}</pre>
+            <p><span class="method">GET/POST</span> <code>/bio</code></p>
+            <p>Supports robust login methods (Reward, Major Login, Shop2Game).</p>
+            <pre><span class="host-url"></span>/bio?bio={bio}&access_token={token}</pre>
         </div>
 
-        <div class="card">
-            <h3>Method 3: UID & Password</h3>
-            <p><span class="method">GET</span> <code>/long_bio</code></p>
-            <pre><span class="host-url"></span>/long_bio?bio={bio}&uid={uid}&password={pass}</pre>
-        </div>
-
-        <div class="card">
-            <h3>Response Example</h3>
-            <pre>
-{
-  "status": "success",
-  "message": "Bio Updated",
-  "uid": "123456789",
-  "name": "ProPlayer",
-  "credit": "@spidey_abd"
-}</pre>
-        </div>
-        
         <div class="footer">
             Owner: ƬᏞㅤSᴘɪᴅʏㅤꪶꫂ<br>
             Telegram: <a href="https://t.me/spidey_abd" target="_blank">@spidey_abd</a><br>
-            Email: <a href="mailto:spidyabd07@gmail.com">spidyabd07@gmail.com</a>
         </div>
     </div>
     
     <script>
-        // Automatically inject current host URL
         document.querySelectorAll('.host-url').forEach(el => {
             el.innerText = window.location.origin;
         });
@@ -491,7 +787,7 @@ HTML_TOOL = r"""
             document.getElementById('res-icon').className = type === 'success' ? "fas fa-check-circle res-icon" : "fas fa-times-circle res-icon";
             document.getElementById('res-title').innerText = title;
             document.getElementById('res-body').innerHTML = html;
-            setTimeout(() => { ov.className = ""; }, 3000);
+            setTimeout(() => { ov.className = ""; }, 4000);
         }
 
         async function run(e) {
@@ -499,30 +795,40 @@ HTML_TOOL = r"""
             const btn = document.getElementById('btn');
             btn.disabled = true; btn.innerText = "Processing...";
             
+            // Gather data
             const fd = new FormData(document.getElementById('form'));
-            let mode = 'token'; // Default
-            if(!document.getElementById('i-jwt').classList.contains('hidden')) mode = 'jwt';
-            if(!document.getElementById('i-uid').classList.contains('hidden')) mode = 'uid';
-            fd.append('mode', mode);
-
+            
+            // Using the /bio endpoint which supports auto-region & robust login
             try {
-                const r = await fetch('/exec', { method: 'POST', body: fd });
+                // We use POST here to support your requirement:
+                // It effectively sends data like: /bio?uid=...&pass=...&bio=... 
+                // but via body to allow special characters and security.
+                const r = await fetch('/bio', { method: 'POST', body: fd });
                 const d = await r.json();
                 
-                if(d.ok) {
+                // The new API returns 'code' (200 is success)
+                if(d.code === 200) {
                     showResult('success', 'SUCCESS', `
-                        Name: <strong>${d.name}</strong><br>
-                        UID: <strong>${d.uid}</strong><br>
-                        Status: Success<br>
-                        Bio Updated Successfully!<br>
-                        <div class="credit">Credit: ${d.credit}</div>
+                        Name: <strong>${d.name || 'Unknown'}</strong><br>
+                        UID: <strong>${d.uid || 'Unknown'}</strong><br>
+                        Region: <strong>${d.region || 'Auto-Detected'}</strong><br>
+                        Login: <strong>${d.login_method || 'API'}</strong><br>
+                        Status: Bio Updated<br>
+                        <div class="credit">Credit: ${d.Credit || '@spidey_abd'}</div>
                     `);
                 } else {
-                    showResult('error', 'FAILED', `An Error Occurred<br>${d.msg}`);
+                    // Handle API errors
+                    showResult('error', 'FAILED', `
+                        Status: ${d.status}<br>
+                        Code: ${d.code}<br>
+                        ${d.error ? d.error : ''}
+                    `);
                 }
-            } catch {
-                showResult('error', 'ERROR', "Connection Failed");
+            } catch (err) {
+                console.error(err);
+                showResult('error', 'ERROR', "Connection Failed or Server Error");
             }
+            
             btn.disabled = false; btn.innerText = "UPDATE BIO";
         }
     </script>
@@ -550,6 +856,7 @@ HTML_TOOL = r"""
             </div>
 
             <form id="form" onsubmit="run(event)">
+                <!-- Region is auto-detected by the new API, but kept for UI consistency if needed later -->
                 <select name="region">
                     <option value="IND" selected>INDIA (IND)</option>
                     <option value="BD">BANGLADESH (BD)</option>
