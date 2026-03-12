@@ -121,15 +121,19 @@ def extract_info_legacy(token):
         return "Unknown", "Unknown Player"
 
 def get_jwt_from_api(uid=None, password=None, access_token=None):
-    params = {}
-    if uid and password: params = {'uid': uid, 'password': password}
-    elif access_token: params = {'access_token': access_token}
+    if uid and password:
+        url = "https://spidey-jwt-gen.vercel.app/guest"
+        params = {'uid': uid, 'password': password}
+    elif access_token:
+        url = "https://spidey-jwt-gen.vercel.app/token"
+        params = {'access_token': access_token}
+    else:
+        return None, "No credentials provided"
     
     try:
-        r = requests.get(API_BASE, params=params, timeout=15)
+        r = requests.get(url, params=params, timeout=15)
         data = r.json()
         if data.get('token'): return data['token'], None
-        elif data.get('access_token'): return data['access_token'], None
         return None, "Invalid Credentials"
     except:
         return None, "Auth API Error"
@@ -155,48 +159,6 @@ def update_bio_request(jwt_token, bio_text, region):
     except:
         return 500
 
-# ==========================================
-# 5. NEW LOGIC (For /bio Endpoint)
-# ==========================================
-def get_name_region_from_reward(access_token):
-    try:
-        uid_url = "https://prod-api.reward.ff.garena.com/redemption/api/auth/inspect_token/"
-        uid_headers ={
-            "authority": "prod-api.reward.ff.garena.com",
-            "method": "GET",
-            "path": "/redemption/api/auth/inspect_token/",
-            "scheme": "https",
-            "accept": "application/json, text/plain, */*",
-            "accept-encoding": "gzip, deflate, br",
-            "access-token": access_token,
-            "origin": "https://reward.ff.garena.com",
-            "referer": "https://reward.ff.garena.com/",
-            "user-agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        }
-        uid_res = requests.get(uid_url, headers=uid_headers, verify=False)
-        uid_data = uid_res.json()
-        
-        return uid_data.get("uid"), uid_data.get("name"), uid_data.get("region")
-    except Exception as e:
-        return None, None, None
-
-def get_openid_from_shop2game(uid):
-    if not uid: return None
-    try:
-        openid_url = "https://topup.pk/api/auth/player_id_login"
-        openid_headers = { 
-            "Accept": "application/json, text/plain, */*",
-            "Content-Type": "application/json",
-            "Origin": "https://topup.pk",
-            "Referer": "https://topup.pk/",
-            "User-Agent": "Mozilla/5.0 (Linux; Android 15; RMX5070 Build/UKQ1.231108.001) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.7204.157 Mobile Safari/537.36",
-        }
-        payload = {"app_id": 100067, "login_id": str(uid)}
-        res = requests.post(openid_url, headers=openid_headers, json=payload, verify=False)
-        data = res.json()
-        return data.get("open_id")
-    except Exception as e:
-        return None
 
 def decode_jwt_info(token):
     try:
@@ -473,20 +435,20 @@ def combined_bio_upload():
         login_method = "Access Token Login"
         final_access_token = access_token
         
-        f_uid, f_name, f_region = get_name_region_from_reward(access_token)
-        final_uid = f_uid
-        final_name = f_name
-        final_region = f_region
-
-        if not final_uid:
-            return jsonify({"status": "❌ Invalid Access Token", "code": 400}), 400
-
-        final_open_id = get_openid_from_shop2game(final_uid)
-        
-        if final_open_id:
-            final_jwt = perform_major_login(access_token, final_open_id)
-        else:
-            return jsonify({"status": "❌ Shop2Game OpenID Fetch Failed", "code": 400}), 400
+        try:
+            res = requests.get(f"https://spidey-jwt-gen.vercel.app/token?access_token={access_token}", timeout=15, verify=False)
+            data = res.json()
+            
+            if data.get("status") == "success" and data.get("token"):
+                final_jwt = data["token"]
+                final_uid = data.get("account_id")
+                final_name = data.get("account_name")
+                final_region = data.get("region")
+                final_open_id = data.get("open_id")
+            else:
+                return jsonify({"status": "❌ Invalid Access Token Credentials", "code": 400}), 400
+        except Exception as e:
+            return jsonify({"status": "❌ Auth API Fetch Error", "code": 500}), 500
     
     else:
         return jsonify({"status": "❌ Error", "code": 400, "error": "Provide JWT, or UID/Pass, or Access Token"}), 400
