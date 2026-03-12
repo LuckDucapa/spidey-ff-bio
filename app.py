@@ -375,7 +375,7 @@ def execute_web():
                 "msg": "Bio Updated Successfully", 
                 "uid": uid, 
                 "name": name,
-                "credit": "@spidey_abd"
+                "credit": "@spideyabd"
             })
         elif code == 401:
             return jsonify({"ok": False, "msg": "Session Expired"})
@@ -412,7 +412,7 @@ def public_api():
                 "message": "Bio Updated", 
                 "uid": uid_val, 
                 "name": name_val,
-                "credit": "@spidey_abd"
+                "credit": "@spideyabd"
             })
         else:
             return jsonify({"status": "error", "message": "Failed", "code": code})
@@ -497,7 +497,7 @@ def combined_bio_upload():
     result = upload_bio_request_new(final_jwt, bio)
     
     response_data = {
-        "Credit": "@spidey_abd",
+        "Credit": "@spideyabd",
         "Join For More": "Telegram: @TubeGroww",
         "status": result["status"],
         "login_method": login_method,
@@ -562,7 +562,7 @@ HTML_API_DOCS = r"""
 
         <div class="footer">
             Owner: ƬᏞㅤSᴘɪᴅʏㅤꪶꫂ<br>
-            Telegram: <a href="https://t.me/spidey_abd" target="_blank">@spidey_abd</a><br>
+            Telegram: <a href="https://t.me/spideyabd" target="_blank">@spideyabd</a><br>
         </div>
     </div>
     
@@ -814,7 +814,7 @@ HTML_TOOL = r"""
                         Region: <strong>${d.region || 'Auto-Detected'}</strong><br>
                         Login: <strong>${d.login_method || 'API'}</strong><br>
                         Status: Bio Updated<br>
-                        <div class="credit">Credit: ${d.Credit || '@spidey_abd'}</div>
+                        <div class="credit">Credit: ${d.Credit || '@spideyabd'}</div>
                     `);
                 } else {
                     // Handle API errors
@@ -924,8 +924,8 @@ HTML_TOOL = r"""
             
             <div class="footer">
                 Owner: ƬᏞㅤSᴘɪᴅʏㅤꪶꫂ<br>
-                Telegram: <a href="https://t.me/spidey_abd" target="_blank">@spidey_abd</a><br>
-                Email: <a href="mailto:spidyabd07@gmail.com">spidyabd07@gmail.com</a>
+                Telegram: <a href="https://t.me/spideyabd" target="_blank">@spideyabd</a><br>
+                Email: <a href="mailto:spideyabd@gmail.com">spideyabd@gmail.com</a>
             </div>
         </div>
     </div>
