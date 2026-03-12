@@ -33,7 +33,7 @@ KEY = b'Yg&tc%DEuh6%Zc^8'  # Same key in both scripts
 IV = b'6oyZDr22E3ychjM%'   # Same IV in both scripts
 
 # --- Legacy Config (For UI / long_bio) ---
-API_BASE = "https://raihan-access-to-jwt.vercel.app/token"
+API_BASE = "https://spidey-jwt-gen.vercel.app/guest"
 HEADERS_GAME = {
     'User-Agent': 'Dalvik/2.1.0 (Linux; U; Android 14; SM-S918B Build/UP1A.231005.007)',
     'Connection': 'Keep-Alive',
