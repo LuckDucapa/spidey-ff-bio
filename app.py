@@ -32,8 +32,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 KEY = b'Yg&tc%DEuh6%Zc^8'  # Same key in both scripts
 IV = b'6oyZDr22E3ychjM%'   # Same IV in both scripts
 
-# --- Legacy Config (For UI / long_bio) ---
-API_BASE = "https://spidey-jwt-gen.vercel.app/guest"
 HEADERS_GAME = {
     'User-Agent': 'Dalvik/2.1.0 (Linux; U; Android 14; SM-S918B Build/UP1A.231005.007)',
     'Connection': 'Keep-Alive',
@@ -121,22 +119,128 @@ def extract_info_legacy(token):
         return "Unknown", "Unknown Player"
 
 def get_jwt_from_api(uid=None, password=None, access_token=None):
+    # --- HELPER: Fetch Open ID via reward.ff & topup.pk ---
+    def fetch_open_id(acc_token):
+        try:
+            uid_url = "https://prod-api.reward.ff.garena.com/redemption/api/auth/inspect_token/"
+            uid_headers = {
+                "access-token": acc_token,
+                "origin": "https://reward.ff.garena.com",
+                "referer": "https://reward.ff.garena.com/",
+                "user-agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36"
+            }
+            uid_res = requests.get(uid_url, headers=uid_headers, verify=False, timeout=10).json()
+            extracted_uid = uid_res.get("uid")
+            
+            if not extracted_uid: 
+                return None
+
+            openid_url = "https://topup.pk/api/auth/player_id_login"
+            openid_headers = { 
+                "Content-Type": "application/json",
+                "Origin": "https://topup.pk",
+                "Referer": "https://topup.pk/",
+                "User-Agent": "Mozilla/5.0 (Linux; Android 15; RMX5070 Build/UKQ1.231108.001) AppleWebKit/537.36 Chrome/138.0.7204.157 Mobile Safari/537.36"
+            }
+            payload = {"app_id": 100067, "login_id": str(extracted_uid)}
+            openid_res = requests.post(openid_url, headers=openid_headers, json=payload, verify=False, timeout=10).json()
+            return openid_res.get("open_id")
+        except: 
+            return None
+
+    # --- STEP 1: Process Input Credentials ---
+    final_acc_token = None
+    final_open_id = None
+
     if uid and password:
-        url = "https://spidey-jwt-gen.vercel.app/guest"
-        params = {'uid': uid, 'password': password}
+        try:
+            oauth_url = "https://100067.connect.garena.com/oauth/guest/token/grant"
+            payload = {
+                'uid': uid, 'password': password, 'response_type': "token",
+                'client_type': "2", 'client_secret': "2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3",
+                'client_id': "100067"
+            }
+            headers = {'User-Agent': "GarenaMSDK/4.0.19P9(SM-M526B ;Android 13;pt;BR;)"}
+            res = requests.post(oauth_url, data=payload, headers=headers, verify=False, timeout=10).json()
+            
+            final_acc_token = res.get('access_token')
+            final_open_id = res.get('open_id')
+            
+            if not final_acc_token or not final_open_id:
+                return None, "Invalid Guest Credentials"
+        except:
+            return None, "Auth API Error"
+            
     elif access_token:
-        url = "https://spidey-jwt-gen.vercel.app/token"
-        params = {'access_token': access_token}
+        final_acc_token = access_token
+        final_open_id = fetch_open_id(access_token)
+        if not final_open_id:
+            return None, "Failed to extract Open ID from Access Token"
     else:
         return None, "No credentials provided"
-    
+
+    # --- STEP 2: Fast Local JWT Generation (MajorLogin) ---
     try:
-        r = requests.get(url, params=params, timeout=15)
-        data = r.json()
-        if data.get('token'): return data['token'], None
-        return None, "Invalid Credentials"
-    except:
-        return None, "Auth API Error"
+        import my_pb2, output_pb2
+        platforms =[8, 3, 4, 6]
+        
+        for p_type in platforms:
+            try:
+                game_data = my_pb2.GameData()
+                game_data.timestamp = "2024-12-05 18:15:32"
+                game_data.game_name = "free fire"
+                game_data.game_version = 1
+                game_data.version_code = "1.108.3"
+                game_data.os_info = "Android OS 9 / API-28"
+                game_data.device_type = "Handheld"
+                game_data.network_provider = "Verizon Wireless"
+                game_data.connection_type = "WIFI"
+                game_data.screen_width = 1280
+                game_data.screen_height = 960
+                game_data.dpi = "240"
+                game_data.cpu_info = "ARMv7 VFPv3 NEON VMH | 2400 | 4"
+                game_data.total_ram = 5951
+                game_data.gpu_name = "Adreno (TM) 640"
+                game_data.gpu_version = "OpenGL ES 3.0"
+                game_data.user_id = "Google|74b585a9-0268-4ad3-8f36-ef41d2e53610"
+                game_data.ip_address = "172.190.111.97"
+                game_data.language = "en"
+                game_data.open_id = final_open_id
+                game_data.access_token = final_acc_token
+                game_data.platform_type = p_type
+                game_data.field_99 = str(p_type)
+                game_data.field_100 = str(p_type)
+
+                # Encrypting data using your existing main script logic
+                edata = encrypt_data(game_data.SerializeToString())
+                
+                url = "https://loginbp.ggblueshark.com/MajorLogin"
+                headers = {
+                    "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 9; ASUS_Z01QD Build/PI)",
+                    "Connection": "Keep-Alive",
+                    "Accept-Encoding": "gzip",
+                    "Content-Type": "application/octet-stream",
+                    "Expect": "100-continue",
+                    "X-Unity-Version": "2018.4.11f1",
+                    "X-GA": "v1 1",
+                    "ReleaseVersion": "OB52"
+                }
+                
+                response = requests.post(url, data=edata, headers=headers, verify=False, timeout=5)
+                if response.status_code == 200:
+                    msg = output_pb2.Garena_420()
+                    msg.ParseFromString(response.content)
+                    token = getattr(msg, "token", None)
+                    if token: return token, None
+                    
+            except Exception:
+                continue
+                
+        return None, "Major Login Failed (Invalid Token or Setup)"
+        
+    except ImportError:
+        return None, "Server Error: Protobuf files missing"
+
 
 def update_bio_request(jwt_token, bio_text, region):
     url = SERVERS.get(region, SERVERS["IND"])
@@ -291,11 +395,6 @@ def upload_bio_request_new(jwt_token, bio_text):
 # 6. ROUTES
 # ==========================================
 
-# --- MAIN PAGE -> REDIRECT TO TOOL ---
-@app.route('/')
-def root():
-    return """<script>window.location.replace('/');</script>"""
-
 # --- TOOL UI ---
 @app.route('/')
 def secure_app():
@@ -346,40 +445,62 @@ def execute_web():
     except:
         return jsonify({"ok": False, "msg": "Server Error"})
 
-# --- PUBLIC API ENDPOINT (LEGACY) ---
-@app.route('/long_bio', methods=['GET'])
-def public_api():
+
+def fetch_open_id_cli(access_token):
+    """Fetches Open ID using reward.ff and topup.pk (from CLI logic)"""
     try:
-        bio = request.args.get('bio')
-        reg = request.args.get('region', 'IND')
-        jwt = request.args.get('jwt')
-        acc = request.args.get('access') or request.args.get('access_token')
-        uid = request.args.get('uid')
-        pwd = request.args.get('password')
-        
-        if not bio: return jsonify({"status":"error","message":"No Bio Provided"})
-        
-        final_jwt, err = None, None
-        if jwt: final_jwt = jwt
-        elif acc: final_jwt, err = get_jwt_from_api(access_token=acc)
-        elif uid and pwd: final_jwt, err = get_jwt_from_api(uid=uid, password=pwd)
-        
-        if not final_jwt: return jsonify({"status":"error","message":err or "No Auth"})
-        
-        code = update_bio_request(final_jwt, bio, reg)
-        if code == 200:
-            uid_val, name_val = extract_info_legacy(final_jwt)
-            return jsonify({
-                "status": "success", 
-                "message": "Bio Updated", 
-                "uid": uid_val, 
-                "name": name_val,
-                "credit": "@spideyabd"
-            })
-        else:
-            return jsonify({"status": "error", "message": "Failed", "code": code})
-    except:
-        return jsonify({"status": "error", "message": "Server Error"})
+        uid_url = "https://prod-api.reward.ff.garena.com/redemption/api/auth/inspect_token/"
+        uid_headers = {
+            "authority": "prod-api.reward.ff.garena.com",
+            "method": "GET",
+            "path": "/redemption/api/auth/inspect_token/",
+            "scheme": "https",
+            "accept": "application/json, text/plain, */*",
+            "accept-encoding": "gzip, deflate, br",
+            "accept-language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            "access-token": access_token,
+            "cookie": "_gid=GA1.2.444482899.1724033242; _ga_XB5PSHEQB4=GS1.1.1724040177.1.1.1724040732.0.0.0; token_session=cb73a97aaef2f1c7fd138757dc28a08f92904b1062e66c; _ga_KE3SY7MRSD=GS1.1.1724041788.0.0.1724041788.0; _ga_RF9R6YT614=GS1.1.1724041788.0.0.1724041788.0; _ga=GA1.1.1843180339.1724033241; apple_state_key=817771465df611ef8ab00ac8aa985783; _ga_G8QGMJPWWV=GS1.1.1724049483.1.1.1724049880.0.0; datadome=HBTqAUPVsbBJaOLirZCUkN3rXjf4gRnrZcNlw2WXTg7bn083SPey8X~ffVwr7qhtg8154634Ee9qq4bCkizBuiMZ3Qtqyf3Isxmsz6GTH_b6LMCKWF4Uea_HSPk;",
+            "origin": "https://reward.ff.garena.com",
+            "referer": "https://reward.ff.garena.com/",
+            "sec-ch-ua": '"Not.A/Brand";v="99", "Chromium";v="124"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Android"',
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-site",
+            "user-agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        }
+        uid_res = requests.get(uid_url, headers=uid_headers, verify=False, timeout=10)
+        uid_data = uid_res.json()
+        uid = uid_data.get("uid")
+
+        if not uid:
+            return None
+
+        openid_url = "https://topup.pk/api/auth/player_id_login"
+        openid_headers = { 
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Encoding": "gzip, deflate, br, zstd",
+            "Accept-Language": "en-MM,en-US;q=0.9,en;q=0.8",
+            "Content-Type": "application/json",
+            "Origin": "https://topup.pk",
+            "Referer": "https://topup.pk/",
+            "sec-ch-ua": '"Not)A;Brand";v="8", "Chromium";v="138", "Android WebView";v="138"',
+            "sec-ch-ua-mobile": "?1",
+            "sec-ch-ua-platform": '"Android"',
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 15; RMX5070 Build/UKQ1.231108.001) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.7204.157 Mobile Safari/537.36",
+            "X-Requested-With": "mark.via.gp",
+            "Cookie": "source=mb; region=PK; mspid2=13c49fb51ece78886ebf7108a4907756; _fbp=fb.1.1753985808817.794945392376454660; language=en; datadome=WQaG3HalUB3PsGoSXY3TdcrSQextsSFwkOp1cqZtJ7Ax4YkiERHUgkgHlEAIccQO~w8dzTGM70D9SzaH7vymmEqOrVeX5pIsPVE22Uf3TDu6W3WG7j36ulnTg2DltRO7; session_key=hq02g63z3zjcumm76mafcooitj7nc79y",
+        }
+        payload = {"app_id": 100067, "login_id": str(uid)}
+        openid_res = requests.post(openid_url, headers=openid_headers, json=payload, verify=False, timeout=10)
+        return openid_res.json().get("open_id")
+
+    except Exception as e:
+        return None
 
 # --- NEW PUBLIC API ENDPOINT (/bio) ---
 @app.route("/bio", methods=["GET", "POST"])
@@ -389,6 +510,7 @@ def combined_bio_upload():
     uid = request.args.get("uid") or request.form.get("uid")
     password = request.args.get("pass") or request.form.get("pass")
     access_token = request.form.get("access_token") or request.args.get("access_token") or request.form.get("access") or request.args.get("access")
+    
     if not bio:
         return jsonify({"status": "❌ Error", "code": 400, "error": "Missing 'bio' parameter"}), 400
 
@@ -435,19 +557,25 @@ def combined_bio_upload():
         final_access_token = access_token
         
         try:
-            res = requests.get(f"https://spidey-jwt-gen.vercel.app/token?access_token={access_token}", timeout=15, verify=False)
-            data = res.json()
+            # 1. Fetch OpenID using the precise headers provided from the CLI
+            final_open_id = fetch_open_id_cli(final_access_token)
             
-            if data.get("status") == "success" and data.get("token"):
-                final_jwt = data["token"]
-                final_uid = data.get("account_id")
-                final_name = data.get("account_name")
-                final_region = data.get("region")
-                final_open_id = data.get("open_id")
+            if not final_open_id:
+                return jsonify({"status": "❌ Invalid Access Token or Extract Failed", "code": 400}), 400
+            
+            # 2. Perform Major Login locally to generate the JWT Token
+            final_jwt = perform_major_login(final_access_token, final_open_id)
+            
+            if final_jwt:
+                j_uid, j_name, j_region = decode_jwt_info(final_jwt)
+                final_uid = j_uid
+                final_name = j_name
+                final_region = j_region
             else:
-                return jsonify({"status": "❌ Invalid Access Token Credentials", "code": 400}), 400
+                return jsonify({"status": "❌ Major Login Failed using Access Token", "code": 500}), 500
+                
         except Exception as e:
-            return jsonify({"status": "❌ Auth API Fetch Error", "code": 500}), 500
+            return jsonify({"status": f"❌ Auth Error: {str(e)}", "code": 500}), 500
     
     else:
         return jsonify({"status": "❌ Error", "code": 400, "error": "Provide JWT, or UID/Pass, or Access Token"}), 400
@@ -459,7 +587,7 @@ def combined_bio_upload():
     
     response_data = {
         "Credit": "@spideyabd",
-        "Join For More": "Telegram: @TubeGroww",
+        "Join For More": "Telegram: @SPIDEYFREEFILES",
         "status": result["status"],
         "login_method": login_method,
         "code": result["code"],
@@ -476,6 +604,7 @@ def combined_bio_upload():
     response = make_response(jsonify(response_data))
     response.headers["Content-Type"] = "application/json"
     return response
+
 
 # ==========================================
 # UI: API DOCUMENTATION PAGE (/api)
@@ -494,10 +623,16 @@ HTML_API_DOCS = r"""
         .container { max-width: 800px; margin: 0 auto; }
         h1 { background: linear-gradient(90deg, #4F46E5, #A78BFA); -webkit-background-clip: text; color: transparent; font-size: 32px; }
         .card { background: var(--glass); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 20px; word-wrap: break-word; }
-        .method { display: inline-block; background: #4F46E5; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 12px; margin-right: 10px; }
-        code { background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px; color: #22D3EE; font-family: monospace; font-size: 13px; }
-        pre { background: #050505; padding: 15px; border-radius: 8px; overflow-x: auto; border: 1px solid var(--border); color: #ccc; white-space: pre-wrap; word-wrap: break-word; }
-        .param { color: #A78BFA; font-weight: bold; }
+        
+        .method { display: inline-block; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 12px; margin-right: 10px; }
+        .method.get { background: #10B981; } /* Emerald Green */
+        .method.post { background: #3B82F6; } /* Blue */
+        
+        /* Changed to normal font (Inter) instead of monospace */
+        code { background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px; color: #22D3EE; font-family: 'Inter', sans-serif; font-size: 14px; }
+        pre { background: #050505; padding: 15px; border-radius: 8px; overflow-x: auto; border: 1px solid var(--border); color: #ccc; white-space: pre-wrap; word-wrap: break-word; margin-top: 5px; margin-bottom: 15px; font-family: 'Inter', sans-serif; font-size: 13px; line-height: 1.5; }
+        
+        .param-title { color: #A78BFA; font-weight: 600; font-size: 14px; margin-top: 15px; display: block; }
         .footer { margin-top: 40px; text-align: center; color: #666; font-size: 14px; border-top: 1px solid var(--border); padding-top: 20px; }
         .footer a { color: var(--accent); text-decoration: none; }
     </style>
@@ -505,29 +640,64 @@ HTML_API_DOCS = r"""
 <body>
     <div class="container">
         <h1>API Documentation</h1>
-        <p>Welcome to the Bio Injector Public API.</p>
-        
-        <h2>Standard API (Legacy)</h2>
+        <p>Welcome to the Free Fire Bio Injector Public API. The <code>/bio</code> endpoint supports robust login methods (Reward, Major Login, Shop2Game) and auto-detects regions. It accepts both <b>GET</b> and <b>POST</b> requests.</p>
+
+        <!-- GET METHOD SECTION -->
+        <h2>1. GET Method (URL Parameters)</h2>
         <div class="card">
-            <p><span class="method">GET</span> <code>/long_bio</code></p>
-            <pre><span class="host-url"></span>/long_bio?bio={bio}&jwt={jwt_token}</pre>
-            <p>Also supports: <code>&access={token}</code> or <code>&uid={uid}&password={pass}</code></p>
+            <p><span class="method get">GET</span> <code>/bio</code></p>
+            <p style="font-size: 13px; color: #A09CB9;">Pass the parameters directly in the URL. Best for quick tests and simple integrations.</p>
+            
+            <span class="param-title">Using Access Token (Recommended)</span>
+            <pre><span class="host-url"></span>/bio?bio={bio_text}&access_token={token}</pre>
+
+            <span class="param-title">Using UID & Password</span>
+            <pre><span class="host-url"></span>/bio?bio={bio_text}&uid={uid}&pass={password}</pre>
+
+            <span class="param-title">Using Direct JWT</span>
+            <pre><span class="host-url"></span>/bio?bio={bio_text}&jwt={jwt_token}</pre>
         </div>
 
-        <h2>Advanced API (New)</h2>
+        <!-- POST METHOD SECTION -->
+        <h2>2. POST Method (Form Data / Body)</h2>
         <div class="card">
-            <p><span class="method">GET/POST</span> <code>/bio</code></p>
-            <p>Supports robust login methods (Reward, Major Login, Shop2Game).</p>
-            <pre><span class="host-url"></span>/bio?bio={bio}&access_token={token}</pre>
+            <p><span class="method post">POST</span> <code>/bio</code></p>
+            <p style="font-size: 13px; color: #A09CB9;">Send data securely in the request body. Recommended to avoid URL length limits (especially for symbols/colors) and to keep credentials hidden.</p>
+            
+            <span class="param-title">Headers Required:</span>
+            <pre>Content-Type: application/x-www-form-urlencoded</pre>
+            
+            <span class="param-title" style="margin-bottom: 15px;">Body Payload Options (Choose One):</span>
+            
+            <div style="margin-bottom: 15px;">
+                <span style="font-size: 13px; color: #A09CB9; font-weight: 600;">Option 1: Access Token (Recommended)</span>
+                <pre style="margin-top: 6px;">access_token={token}&bio={bio_text}</pre>
+            </div>
+
+            <div style="margin-bottom: 15px;">
+                <span style="font-size: 13px; color: #A09CB9; font-weight: 600;">Option 2: UID & Password</span>
+                <pre style="margin-top: 6px;">uid={uid}&pass={password}&bio={bio_text}</pre>
+            </div>
+
+            <div style="margin-bottom: 5px;">
+                <span style="font-size: 13px; color: #A09CB9; font-weight: 600;">Option 3: Direct JWT</span>
+                <pre style="margin-top: 6px;">jwt={jwt_token}&bio={bio_text}</pre>
+            </div>
+            
+            <span class="param-title">cURL Example:</span>
+            <pre>curl -X POST <span class="host-url"></span>/bio \
+     -d "bio=[b][FF0000]King Spidey" \
+     -d "access_token=your_garena_access_token"</pre>
         </div>
 
         <div class="footer">
-            Owner: ƬᏞㅤSᴘɪᴅʏㅤꪶꫂ<br>
+            Owner: Ꮶɪɴɢ┇⁣ꨄᏚᴘɪᴅᴇʏ<br>
             Telegram: <a href="https://t.me/spideyabd" target="_blank">@spideyabd</a><br>
         </div>
     </div>
     
     <script>
+        // Auto-fill the current domain into the code blocks
         document.querySelectorAll('.host-url').forEach(el => {
             el.innerText = window.location.origin;
         });
@@ -537,7 +707,7 @@ HTML_API_DOCS = r"""
 """
 
 # ==========================================
-# UI: MAIN TOOL (/security)
+# UI: MAIN TOOL (/)
 # ==========================================
 HTML_TOOL = r"""
 <!DOCTYPE html>
@@ -546,7 +716,7 @@ HTML_TOOL = r"""
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Free Fire - Bio Injector</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <style>
         :root {
@@ -602,78 +772,121 @@ HTML_TOOL = r"""
 
         /* Header */
         .header {
-            position: fixed; top: 0; width: 100%; padding: 14px var(--safe-area-padding);
+            position: fixed; top: 0; width: 100%; padding: 12px var(--safe-area-padding);
             display: flex; align-items: center; justify-content: center; z-index: 100;
             background: rgba(13, 15, 24, 0.6); backdrop-filter: blur(12px); border-bottom: 1px solid var(--glass-border);
         }
         .app-title {
-            font-size: 22px; font-weight: 700; color: transparent;
+            font-size: 20px; font-weight: 700; color: transparent;
             background-image: linear-gradient(45deg, var(--accent-gradient-end), var(--accent-gradient-start));
             background-clip: text; -webkit-background-clip: text;
         }
 
         /* Container */
-        .main { width: 100%; display: flex; flex-direction: column; align-items: center; padding: 80px 16px 20px 16px; }
+        .main { width: 100%; display: flex; flex-direction: column; align-items: center; padding: 70px 10px 20px 10px; }
 
         .glass-panel {
             background: var(--glass-bg); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
             border: 1px solid var(--glass-border); border-radius: var(--border-radius-md);
-            box-shadow: 0 8px 32px 0 rgba(0,0,0,0.37); padding: 24px; width: 100%; max-width: 450px;
+            box-shadow: 0 8px 32px 0 rgba(0,0,0,0.37); padding: 16px 12px; width: 100%; max-width: 650px;
         }
 
         /* Tabs */
-        .tabs { display: flex; background: rgba(0,0,0,0.2); padding: 4px; border-radius: 12px; margin-bottom: 20px; border: 1px solid var(--glass-border); }
-        .tab { flex: 1; text-align: center; padding: 10px; font-size: 13px; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-radius: 8px; transition: 0.3s; }
+        .tabs { display: flex; background: rgba(0,0,0,0.2); padding: 4px; border-radius: 12px; margin-bottom: 16px; border: 1px solid var(--glass-border); }
+        .tab { flex: 1; text-align: center; padding: 8px; font-size: 12px; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-radius: 8px; transition: 0.3s; }
         .tab.active { background: rgba(255,255,255,0.1); color: var(--text-primary); box-shadow: 0 0 10px rgba(138, 116, 255, 0.2); }
 
         /* Inputs */
         input, select {
             width: 100%; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border);
-            color: var(--text-primary); padding: 14px; border-radius: var(--border-radius-sm);
-            margin-bottom: 10px; font-size: 14px; transition: 0.3s;
+            color: var(--text-primary); padding: 12px; border-radius: var(--border-radius-sm);
+            margin-bottom: 12px; font-size: 13px; transition: 0.3s;
         }
         input:focus { border-color: var(--accent-glow); box-shadow: 0 0 10px rgba(34, 211, 238, 0.1); }
 
+        /* ---- TOOLBAR STYLING ---- */
+        .toolbar-section { margin-bottom: 14px; }
+        .toolbar-label { 
+            font-size: 9px; font-weight: 800; color: var(--text-secondary); 
+            letter-spacing: 1.5px; margin-bottom: 8px; margin-left: 2px;
+        }
+        
+        .colors-ribbon { 
+            display: flex; gap: 10px; overflow-x: auto; flex-wrap: nowrap; 
+            padding-bottom: 8px; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+        }
+        .colors-ribbon::-webkit-scrollbar { display: none; }
+        
+        .c-dot { 
+            width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0; 
+            cursor: pointer; transition: 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            border: 2px solid rgba(255,255,255,0.15); box-shadow: 0 4px 8px rgba(0,0,0,0.4);
+        }
+        .c-dot:active { transform: scale(0.85); }
+        
+        .format-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+        .format-btn {
+            background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border);
+            border-radius: 10px; padding: 8px 2px; display: flex; flex-direction: column; 
+            align-items: center; justify-content: center; cursor: pointer; transition: 0.2s;
+        }
+        .format-btn .icon { font-size: 15px; margin-bottom: 3px; color: var(--text-primary); font-family: serif; }
+        .format-btn .lbl { font-size: 9px; color: var(--text-secondary); font-weight: 600; font-family: 'Inter', sans-serif; letter-spacing: 0.5px; }
+        .format-btn:active { background: rgba(34, 211, 238, 0.15); border-color: var(--accent-glow); transform: scale(0.95); }
+        .format-btn:active .icon, .format-btn:active .lbl { color: var(--accent-glow); }
+
         /* Editor */
-        .editor-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; padding: 0 4px; }
-        .editor-label { font-size: 12px; font-weight: bold; color: var(--text-secondary); letter-spacing: 1px; }
-        .clr-btn {
-            background: var(--danger-bg); color: var(--danger-glow);
-            border: 1px solid var(--danger-glow); padding: 4px 12px;
-            border-radius: 6px; font-size: 11px; font-weight: 700;
-            cursor: pointer; letter-spacing: 0.5px;
+        .editor-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; padding: 0 4px; }
+        .editor-label { font-size: 11px; font-weight: bold; color: var(--text-secondary); letter-spacing: 1px; }
+        .char-count {
+            font-size: 9.5px; font-weight: 700;
+            color: var(--accent-glow); letter-spacing: 0.5px;
+            background: rgba(34, 211, 238, 0.1);
+            padding: 4px 6px; border-radius: 6px; border: 1px solid rgba(34, 211, 238, 0.3);
+            transition: 0.2s;
         }
+        
+        /* TEXTAREA - Big & Readable, Monospaced */
         textarea {
-            width: 100%; height: 90px; background: rgba(0,0,0,0.3);
+            width: 100%; height: 100px; background: rgba(0,0,0,0.3);
             border: 1px solid var(--glass-border); color: var(--text-primary);
-            padding: 14px; border-radius: var(--border-radius-sm);
-            font-size: 15px; resize: none; display: block;
+            padding: 12px; border-radius: var(--border-radius-sm);
+            font-size: 14px; 
+            font-family: 'Courier New', Courier, monospace !important;
+            resize: none; display: block;
+            white-space: pre-wrap; word-wrap: break-word; overflow-x: hidden;
         }
 
-        /* Preview */
+        /* PREVIEW BOX - Big, Accurate, and exactly 39 characters */
         .preview-box {
-            margin-top: 15px; margin-bottom: 20px;
-            background: rgba(0,0,0,0.5); padding: 15px;
+            margin-top: 12px; margin-bottom: 16px;
+            background: rgba(0,0,0,0.5); padding: 12px;
             border-radius: var(--border-radius-sm); border: 1px dashed var(--glass-border);
-            min-height: 45px; font-weight: bold; font-size: 14px; word-wrap: break-word; color: #fff;
+            min-height: 84px; display: flex; align-items: flex-start; justify-content: flex-start;
+            overflow-x: auto; /* Adds scroll if mobile screen is too small, preserving shape */
         }
 
-        /* Toolbar */
-        .toolbar { margin-bottom: 15px; }
-        .colors { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 5px; margin-bottom: 10px; scrollbar-width: none; }
-        .c-dot { width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0; cursor: pointer; border: 1px solid rgba(255,255,255,0.2); }
-        .grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
-        .sym-btn {
-            background: rgba(255,255,255,0.05); color: var(--text-secondary);
-            border: 1px solid var(--glass-border); height: 38px;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 14px; cursor: pointer; border-radius: 8px; transition: 0.2s;
+        #prev-inner {
+            width: 39.5ch; /* .5 buffer fixes the 38-char pixel rounding bug */
+            min-width: 39.5ch; /* Never shrinks below 39 characters */
+            font-size: 14px; /* BIG FONT */
+            letter-spacing: 0px; line-height: 20px;
+            font-family: 'Courier New', Courier, monospace !important;
+            color: #fff; margin: 0; padding: 0;
+            white-space: pre-wrap; word-break: break-all; /* Forces break precisely at 39 characters */
         }
-        .sym-btn:active { background: var(--accent-glow); color: #000; }
+        
+        #prev-inner * {
+            font-family: inherit;
+        }
+
+        /* Custom subtle scrollbars */
+        textarea::-webkit-scrollbar, .preview-box::-webkit-scrollbar { height: 4px; width: 4px; }
+        textarea::-webkit-scrollbar-thumb, .preview-box::-webkit-scrollbar-thumb { background: rgba(138, 116, 255, 0.4); border-radius: 4px; }
 
         /* Button */
         .glass-button {
-            width: 100%; padding: 16px; font-size: 16px; font-weight: 700;
+            width: 100%; padding: 14px; font-size: 15px; font-weight: 700;
             border: none; border-radius: var(--border-radius-sm); cursor: pointer;
             color: white; background-image: linear-gradient(45deg, var(--accent-gradient-start), var(--accent-gradient-end));
             box-shadow: 0 4px 15px rgba(79, 70, 229, 0.4); transition: 0.3s;
@@ -681,9 +894,8 @@ HTML_TOOL = r"""
         .glass-button:disabled { opacity: 0.7; cursor: not-allowed; }
 
         /* Footer */
-        .footer { margin-top: 30px; text-align: center; color: var(--text-secondary); font-size: 13px; line-height: 1.8; padding-bottom: 20px; }
+        .footer { margin-top: 20px; text-align: center; color: var(--text-secondary); font-size: 12px; line-height: 1.8; padding-bottom: 20px; }
         .footer a { color: var(--accent-glow); text-decoration: none; font-weight: bold; }
-        .footer a:hover { text-decoration: underline; }
 
         /* Overlay */
         #overlay {
@@ -696,10 +908,10 @@ HTML_TOOL = r"""
         .res-icon { font-size: 80px; margin-bottom: 20px; transform: scale(0); transition: 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
         #overlay.active .res-icon { transform: scale(1); }
         .res-title { font-size: 28px; font-weight: 800; margin-bottom: 10px; }
-        .res-body { text-align: center; color: var(--text-secondary); line-height: 1.6; }
+        .res-body { text-align: center; color: var(--text-secondary); line-height: 1.6; max-width: 80%; }
         .res-body strong { color: white; font-size: 16px; }
         .credit { margin-top: 15px; font-size: 12px; color: #666; font-family: monospace; }
-
+        
         .success .res-icon { color: var(--accent-glow); text-shadow: 0 0 30px var(--accent-glow); }
         .success .res-title { color: var(--accent-glow); }
         .error .res-icon { color: var(--danger-glow); text-shadow: 0 0 30px var(--danger-glow); }
@@ -708,39 +920,106 @@ HTML_TOOL = r"""
         .hidden { display: none !important; }
     </style>
     <script>
+        let currentMode = 'token'; 
+        let lastValidBio = '';
+
         document.addEventListener('DOMContentLoaded', () => {
             setTimeout(() => document.getElementById('splash-screen').style.display = 'none', 1500);
         });
 
         function setMode(m) {
+            currentMode = m; 
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.getElementById('t-'+m).classList.add('active');
-            ['jwt','token','uid'].forEach(x => document.getElementById('i-'+x).classList.add('hidden'));
+            document.getElementById('t-'+m).classList.add('active');['jwt','token','uid'].forEach(x => document.getElementById('i-'+x).classList.add('hidden'));
             document.getElementById('i-'+m).classList.remove('hidden');
+        }
+
+        function renderPreviewHTML(t) {
+            let prev = t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            prev = prev.replace(/\n/g, '<br>'); 
+            prev = prev.replace(/\[([0-9A-Fa-f]{6})\]/gi, '</span><span style="color:#$1">');
+            
+            prev = prev.replace(/\[c\]/gi, '</span><span style="font-family: cursive !important;">');
+            prev = prev.replace(/\[\/c\]/gi, '</span>');
+            prev = prev.replace(/\[b\]/gi, '<b>').replace(/\[\/b\]/gi, '</b>');
+            prev = prev.replace(/\[i\]/gi, '<i>').replace(/\[\/i\]/gi, '</i>');
+            prev = prev.replace(/\[u\]/gi, '<u>').replace(/\[\/u\]/gi, '</u>');
+            prev = prev.replace(/\[s\]/gi, '<s>').replace(/\[\/s\]/gi, '</s>');
+            
+            document.getElementById('prev-inner').innerHTML = '<span>' + prev + '</span>';
+        }
+
+        // Handle typing input natively using layout measurement
+        function processInput() {
+            const el = document.getElementById('bio');
+            let text = el.value;
+
+            if (text.length > 250) {
+                text = text.substring(0, 250);
+                el.value = text;
+            }
+
+            // Temporarily render to calculate visual lines
+            renderPreviewHTML(text);
+
+            const inner = document.getElementById('prev-inner');
+            
+            // 3 lines * 20px line-height = 60px. 
+            // If the preview box text exceeds 65px (wraps to 4th line), it blocks the input!
+            if (inner.offsetHeight > 65) {
+                el.value = lastValidBio;
+                renderPreviewHTML(lastValidBio);
+            } else {
+                lastValidBio = el.value;
+            }
+
+            updateStats();
         }
 
         function ins(txt) {
             const el = document.getElementById('bio');
-            if(el.value.length + txt.length > 250) return;
-            const [s, e] = [el.selectionStart, el.selectionEnd];
-            el.value = el.value.substring(0, s) + txt + el.value.substring(e);
-            el.focus(); el.selectionStart = el.selectionEnd = s + txt.length;
-            render();
+            const[s, e] =[el.selectionStart, el.selectionEnd];
+            const newVal = el.value.substring(0, s) + txt + el.value.substring(e);
+            
+            if (newVal.length > 250) {
+                alert("Total limit of 250 characters reached!");
+                return;
+            }
+
+            el.value = newVal;
+            processInput(); 
+            el.focus(); 
         }
 
-        function render() {
+        function updateStats() {
             let t = document.getElementById('bio').value;
-            t = t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-            t = t.replace(/\[([0-9A-Fa-f]{6})\]/g, '</span><span style="color:#$1">');
-            t = t.replace(/\[c\]/gi, '</span>'); 
-            t = t.replace(/\[b\]/gi, '<b>').replace(/\[\/b\]/gi, '</b>');
-            t = t.replace(/\[i\]/gi, '<i>').replace(/\[\/i\]/gi, '</i>');
-            t = t.replace(/\[u\]/gi, '<u>').replace(/\[\/u\]/gi, '</u>');
-            t = t.replace(/\[s\]/gi, '<s>').replace(/\[\/s\]/gi, '</s>');
-            document.getElementById('prev').innerHTML = '<span>' + t + '</span>';
+            let counter = document.getElementById('char-count');
+            let totalChars = t.length;
+            
+            const inner = document.getElementById('prev-inner');
+            
+            // Accurately count the visual lines based on pixel height (20px per line)
+            let currentLines = Math.max(1, Math.round(inner.offsetHeight / 20));
+            if(currentLines > 3) currentLines = 3;
+
+            counter.innerText = `Lines: ${currentLines}/3 | Total: ${totalChars}/250`;
+
+            if (totalChars >= 250 || currentLines === 3) {
+                counter.style.color = "var(--danger-glow)";
+                counter.style.borderColor = "var(--danger-glow)";
+                counter.style.background = "var(--danger-bg)";
+            } else {
+                counter.style.color = "var(--accent-glow)";
+                counter.style.borderColor = "rgba(34, 211, 238, 0.3)";
+                counter.style.background = "rgba(34, 211, 238, 0.1)";
+            }
         }
 
-        function clearBio() { document.getElementById('bio').value = ""; render(); }
+        function clearBio() { 
+            document.getElementById('bio').value = ""; 
+            lastValidBio = "";
+            processInput(); 
+        }
 
         function showResult(type, title, html) {
             const ov = document.getElementById('overlay');
@@ -756,18 +1035,24 @@ HTML_TOOL = r"""
             const btn = document.getElementById('btn');
             btn.disabled = true; btn.innerText = "Processing...";
             
-            // Gather data
-            const fd = new FormData(document.getElementById('form'));
+            const fd = new FormData();
+            const bioText = document.getElementById('bio').value;
+            fd.append('bio', bioText);
+            fd.append('region', document.querySelector('select[name="region"]').value);
+
+            if (currentMode === 'token') {
+                fd.append('access_token', document.querySelector('input[name="access_token"]').value);
+            } else if (currentMode === 'jwt') {
+                fd.append('jwt', document.querySelector('input[name="jwt"]').value);
+            } else if (currentMode === 'uid') {
+                fd.append('uid', document.querySelector('input[name="uid"]').value);
+                fd.append('pass', document.querySelector('input[name="pass"]').value);
+            }
             
-            // Using the /bio endpoint which supports auto-region & robust login
             try {
-                // We use POST here to support your requirement:
-                // It effectively sends data like: /bio?uid=...&pass=...&bio=... 
-                // but via body to allow special characters and security.
                 const r = await fetch('/bio', { method: 'POST', body: fd });
                 const d = await r.json();
                 
-                // The new API returns 'code' (200 is success)
                 if(d.code === 200) {
                     showResult('success', 'SUCCESS', `
                         Name: <strong>${d.name || 'Unknown'}</strong><br>
@@ -777,17 +1062,34 @@ HTML_TOOL = r"""
                         Status: Bio Updated<br>
                         <div class="credit">Credit: ${d.Credit || '@spideyabd'}</div>
                     `);
+                    
+                    if (currentMode === 'token') document.querySelector('input[name="access_token"]').value = '';
+                    else if (currentMode === 'jwt') document.querySelector('input[name="jwt"]').value = '';
+                    else if (currentMode === 'uid') {
+                        document.querySelector('input[name="uid"]').value = '';
+                        document.querySelector('input[name="pass"]').value = '';
+                    }
+                    clearBio(); 
+                    
                 } else {
-                    // Handle API errors
+                    let exactError = d.error ? d.error : d.status;
+                    
+                    const hasEmoji = /[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu.test(bioText);
+                    if ((d.code === 500 || d.code === 400) && hasEmoji) {
+                        exactError = "Unsupported Characters/Invalid Characters<br><span style='font-size:12px;color:gray;'>(Emojis cause API rejection)</span>";
+                    }
+
                     showResult('error', 'FAILED', `
-                        Status: ${d.status}<br>
-                        Code: ${d.code}<br>
-                        ${d.error ? d.error : ''}
+                        Code: <strong>${d.code || r.status}</strong><br>
+                        Reason: <strong>${exactError}</strong>
                     `);
                 }
             } catch (err) {
                 console.error(err);
-                showResult('error', 'ERROR', "Connection Failed or Server Error");
+                showResult('error', 'ERROR', `
+                    Failed to execute.<br>
+                    <strong>Details:</strong> ${err.message || err}
+                `);
             }
             
             btn.disabled = false; btn.innerText = "UPDATE BIO";
@@ -805,7 +1107,7 @@ HTML_TOOL = r"""
     </div>
 
     <div class="header">
-        <div class="app-title">BIO INJECTOR</div>
+        <div class="app-title">FF BIO INJECTOR</div>
     </div>
     
     <div class="main">
@@ -817,7 +1119,6 @@ HTML_TOOL = r"""
             </div>
 
             <form id="form" onsubmit="run(event)">
-                <!-- Region is auto-detected by the new API, but kept for UI consistency if needed later -->
                 <select name="region">
                     <option value="IND" selected>INDIA (IND)</option>
                     <option value="BD">BANGLADESH (BD)</option>
@@ -831,54 +1132,71 @@ HTML_TOOL = r"""
                 <div id="i-jwt" class="hidden"><input type="text" name="jwt" placeholder="JWT String"></div>
                 <div id="i-uid" class="hidden"><input type="text" name="uid" placeholder="UID"><input type="text" name="pass" placeholder="Password"></div>
 
-                <div class="toolbar">
-                    <div class="colors">
+                <!-- COLOR PALETTE SECTION -->
+                <div class="toolbar-section">
+                    <div class="toolbar-label">COLOR PALETTE</div>
+                    <div class="colors-ribbon">
                         <div class="c-dot" style="background:#FF0000" onclick="ins('[FF0000]')"></div>
-                        <div class="c-dot" style="background:#00FF00" onclick="ins('[00FF00]')"></div>
-                        <div class="c-dot" style="background:#0000FF" onclick="ins('[0000FF]')"></div>
-                        <div class="c-dot" style="background:#FFFF00" onclick="ins('[FFFF00]')"></div>
-                        <div class="c-dot" style="background:#00FFFF" onclick="ins('[00FFFF]')"></div>
-                        <div class="c-dot" style="background:#FF00FF" onclick="ins('[FF00FF]')"></div>
+                        <div class="c-dot" style="background:#DC143C" onclick="ins('[DC143C]')"></div>
                         <div class="c-dot" style="background:#FFA500" onclick="ins('[FFA500]')"></div>
+                        <div class="c-dot" style="background:#FFD700" onclick="ins('[FFD700]')"></div>
+                        <div class="c-dot" style="background:#FFFF00" onclick="ins('[FFFF00]')"></div>
+                        <div class="c-dot" style="background:#00FF00" onclick="ins('[00FF00]')"></div>
+                        <div class="c-dot" style="background:#32CD32" onclick="ins('[32CD32]')"></div>
+                        <div class="c-dot" style="background:#008000" onclick="ins('[008000]')"></div>
+                        <div class="c-dot" style="background:#00FFFF" onclick="ins('[00FFFF]')"></div>
+                        <div class="c-dot" style="background:#00BFFF" onclick="ins('[00BFFF]')"></div>
+                        <div class="c-dot" style="background:#0000FF" onclick="ins('[0000FF]')"></div>
+                        <div class="c-dot" style="background:#00008B" onclick="ins('[00008B]')"></div>
+                        <div class="c-dot" style="background:#8A2BE2" onclick="ins('[8A2BE2]')"></div>
                         <div class="c-dot" style="background:#800080" onclick="ins('[800080]')"></div>
+                        <div class="c-dot" style="background:#FF00FF" onclick="ins('[FF00FF]')"></div>
+                        <div class="c-dot" style="background:#FF1493" onclick="ins('[FF1493]')"></div>
                         <div class="c-dot" style="background:#FFFFFF" onclick="ins('[FFFFFF]')"></div>
+                        <div class="c-dot" style="background:#C0C0C0" onclick="ins('[C0C0C0]')"></div>
+                        <div class="c-dot" style="background:#808080" onclick="ins('[808080]')"></div>
+                        <div class="c-dot" style="background:#000000" onclick="ins('[000000]')"></div>
+                        <div class="c-dot" style="background:#8B4513" onclick="ins('[8B4513]')"></div>
                     </div>
-                    <div class="grid">
-                        <div class="sym-btn" onclick="ins('Ⓥ')">Ⓥ</div>
-                        <div class="sym-btn" onclick="ins('★')">★</div>
-                        <div class="sym-btn" onclick="ins('♛')">♛</div>
-                        <div class="sym-btn" onclick="ins('⚡')">⚡</div>
-                        <div class="sym-btn" onclick="ins('✿')">✿</div>
-                        <div class="sym-btn" onclick="ins('🔥')">🔥</div>
-                        <div class="sym-btn" onclick="ins('ff')">ff</div>
-                        <div class="sym-btn" onclick="ins('✈')">✈</div>
-                        <div class="sym-btn" onclick="ins('☠')">☠</div>
-                        <div class="sym-btn" onclick="ins('☂')">☂</div>
-                        <div class="sym-btn" onclick="ins('☁')">☁</div>
-                        <div class="sym-btn" onclick="ins('❄')">❄</div>
-                        <div class="sym-btn" onclick="ins('☮')">☮</div>
-                        <div class="sym-btn" onclick="ins('☯')">☯</div>
-                        <div class="sym-btn" onclick="ins('♠')">♠</div>
-                        <div class="sym-btn" onclick="ins('♣')">♣</div>
-                        <div class="sym-btn" onclick="ins('♦')">♦</div>
-                        <div class="sym-btn" onclick="ins('♪')">♪</div>
-                        <div class="sym-btn" onclick="ins('♫')">♫</div>
-                        <div class="sym-btn" onclick="ins('⚔')">⚔</div>
-                        <div class="sym-btn" onclick="ins('⚓')">⚓</div>
-                        <div class="sym-btn" onclick="ins('✓')">✓</div>
-                        <div class="sym-btn" onclick="ins('❤')">❤</div>
-                        <div class="sym-btn" onclick="ins('[b]')">[b]</div>
+                </div>
+
+                <!-- TEXT FORMATTING SECTION -->
+                <div class="toolbar-section">
+                    <div class="toolbar-label">TEXT FORMATTING</div>
+                    <div class="format-grid">
+                        <div class="format-btn" onclick="ins('[b]')">
+                            <span class="icon" style="font-weight: 900;">B</span>
+                            <span class="lbl">Bold</span>
+                        </div>
+                        <div class="format-btn" onclick="ins('[i]')">
+                            <span class="icon" style="font-style: italic;">I</span>
+                            <span class="lbl">Italic</span>
+                        </div>
+                        <div class="format-btn" onclick="ins('[u]')">
+                            <span class="icon" style="text-decoration: underline;">U</span>
+                            <span class="lbl">Under</span>
+                        </div>
+                        <div class="format-btn" onclick="ins('[s]')">
+                            <span class="icon" style="text-decoration: line-through;">S</span>
+                            <span class="lbl">Strike</span>
+                        </div>
+                        <div class="format-btn" onclick="ins('[c]')">
+                            <span class="icon" style="font-family: cursive;">C</span>
+                            <span class="lbl">Curved</span>
+                        </div>
                     </div>
                 </div>
 
                 <div class="editor-header">
-                    <span class="editor-label">BIO TEXT (Max 250)</span>
-                    <button type="button" class="clr-btn" onclick="clearBio()">CLEAR</button>
+                    <span class="editor-label">BIO TEXT</span>
+                    <span id="char-count" class="char-count">Lines: 1/3 | Total: 0/250</span>
                 </div>
                 
-                <textarea id="bio" name="bio" placeholder="Type Bio Here..." maxlength="250" oninput="render()"></textarea>
+                <textarea id="bio" name="bio" placeholder="Type Bio Here..." maxlength="250" oninput="processInput()"></textarea>
 
-                <div class="preview-box" id="prev"></div>
+                <div class="preview-box" id="prev">
+                    <div id="prev-inner"></div>
+                </div>
 
                 <button id="btn" class="glass-button">UPDATE BIO</button>
             </form>
@@ -886,7 +1204,7 @@ HTML_TOOL = r"""
             <div class="footer">
                 Owner: Ꮶɪɴɢ┇⁣ꨄᏚᴘɪᴅᴇʏ<br>
                 Telegram: <a href="https://t.me/spideyabd" target="_blank">@spideyabd</a><br>
-                Email: <a href="mailto:spideyabd@gmail.com">spideyabd@gmail.com</a>
+                Telegram Channel: <a href="https://t.me/SPIDEYFREEFILES">T10 SPIDEY FILES</a>
             </div>
         </div>
     </div>
