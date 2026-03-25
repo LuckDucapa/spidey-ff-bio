@@ -294,10 +294,10 @@ def upload_bio_request_new(jwt_token, bio_text):
 # --- MAIN PAGE -> REDIRECT TO TOOL ---
 @app.route('/')
 def root():
-    return """<script>window.location.replace('/security');</script>"""
+    return """<script>window.location.replace('/');</script>"""
 
 # --- TOOL UI ---
-@app.route('/security')
+@app.route('/')
 def secure_app():
     return render_template_string(HTML_TOOL)
 
@@ -388,8 +388,7 @@ def combined_bio_upload():
     jwt_token = request.args.get("jwt") or request.form.get("jwt")
     uid = request.args.get("uid") or request.form.get("uid")
     password = request.args.get("pass") or request.form.get("pass")
-    access_token = request.args.get("access") or request.form.get("access") or request.args.get("access_token")
-
+    access_token = request.form.get("access_token") or request.args.get("access_token") or request.form.get("access") or request.args.get("access")
     if not bio:
         return jsonify({"status": "❌ Error", "code": 400, "error": "Missing 'bio' parameter"}), 400
 
@@ -812,9 +811,9 @@ HTML_TOOL = r"""
     <div class="main">
         <div class="glass-panel">
             <div class="tabs">
-                <div id="t-token" class="tab active" onclick="setMode('token')">TOKEN</div>
+                <div id="t-token" class="tab active" onclick="setMode('token')">ACCESS</div>
                 <div id="t-jwt" class="tab" onclick="setMode('jwt')">JWT</div>
-                <div id="t-uid" class="tab" onclick="setMode('uid')">UID</div>
+                <div id="t-uid" class="tab" onclick="setMode('uid')">UID-PASS</div>
             </div>
 
             <form id="form" onsubmit="run(event)">
@@ -885,7 +884,7 @@ HTML_TOOL = r"""
             </form>
             
             <div class="footer">
-                Owner: ƬᏞㅤSᴘɪᴅʏㅤꪶꫂ<br>
+                Owner: Ꮶɪɴɢ┇⁣ꨄᏚᴘɪᴅᴇʏ<br>
                 Telegram: <a href="https://t.me/spideyabd" target="_blank">@spideyabd</a><br>
                 Email: <a href="mailto:spideyabd@gmail.com">spideyabd@gmail.com</a>
             </div>
