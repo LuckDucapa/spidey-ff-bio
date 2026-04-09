@@ -38,7 +38,7 @@ HEADERS_GAME = {
     'Expect': '100-continue',
     'X-Unity-Version': '2018.4.11f1', 
     'X-GA': 'v1 1',
-    'ReleaseVersion': 'OB52',
+    'ReleaseVersion': 'OB53',
     'Content-Type': 'application/x-www-form-urlencoded',
 }
 SERVERS = {
@@ -54,7 +54,7 @@ SERVERS = {
 FREEFIRE_UPDATE_URL = "https://client.ind.freefiremobile.com/UpdateSocialBasicInfo"
 MAJOR_LOGIN_URL = "https://loginbp.ggblueshark.com/MajorLogin"
 OAUTH_URL = "https://100067.connect.garena.com/oauth/guest/token/grant"
-FREEFIRE_VERSION = "OB52"
+FREEFIRE_VERSION = "OB53"
 
 BIO_HEADERS = {
     "Expect": "100-continue",
@@ -223,7 +223,7 @@ def get_jwt_from_api(uid=None, password=None, access_token=None):
                     "Expect": "100-continue",
                     "X-Unity-Version": "2018.4.11f1",
                     "X-GA": "v1 1",
-                    "ReleaseVersion": "OB52"
+                    "ReleaseVersion": "OB53"
                 }
                 
                 response = requests.post(url, data=edata, headers=headers, verify=False, timeout=5)
