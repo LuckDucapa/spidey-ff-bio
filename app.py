@@ -13,7 +13,6 @@ from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
 
-# Try importing external protobufs if they exist (for Major Login)
 try:
     import my_pb2
     import output_pb2
@@ -21,16 +20,12 @@ except ImportError:
     pass
 
 app = Flask(__name__)
-# Enable CORS for all routes
 CORS(app)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# ==========================================
-# 1. CONFIGURATION & CONSTANTS
-# ==========================================
-KEY = b'Yg&tc%DEuh6%Zc^8'  # Same key in both scripts
-IV = b'6oyZDr22E3ychjM%'   # Same IV in both scripts
+KEY = b'Yg&tc%DEuh6%Zc^8'
+IV = b'6oyZDr22E3ychjM%'
 
 HEADERS_GAME = {
     'User-Agent': 'Dalvik/2.1.0 (Linux; U; Android 14; SM-S918B Build/UP1A.231005.007)',
@@ -50,7 +45,6 @@ SERVERS = {
     "EU":  "https://clientbp.ggpolarbear.com/UpdateSocialBasicInfo",
 }
 
-# --- New Config (For /bio endpoint) ---
 FREEFIRE_UPDATE_URL = "https://client.ind.freefiremobile.com/UpdateSocialBasicInfo"
 MAJOR_LOGIN_URL = "https://loginbp.ggblueshark.com/MajorLogin"
 OAUTH_URL = "https://100067.connect.garena.com/oauth/guest/token/grant"
@@ -78,10 +72,6 @@ LOGIN_HEADERS = {
     "ReleaseVersion": FREEFIRE_VERSION
 }
 
-# ==========================================
-# 2. PROTOBUF SETUP
-# ==========================================
-# Dynamic BioData setup (Works for both legacy and new logic)
 try:
     _sym_db = _symbol_database.Default()
     BIO_PROTO = b'\n\ndata.proto\"\xbb\x01\n\x04\x44\x61ta\x12\x0f\n\x07\x66ield_2\x18\x02 \x01(\x05\x12\x1e\n\x07\x66ield_5\x18\x05 \x01(\x0b\x32\r.EmptyMessage\x12\x1e\n\x07\x66ield_6\x18\x06 \x01(\x0b\x32\r.EmptyMessage\x12\x0f\n\x07\x66ield_8\x18\x08 \x01(\t\x12\x0f\n\x07\x66ield_9\x18\t \x01(\x05\x12\x1f\n\x08\x66ield_11\x18\x0b \x01(\x0b\x32\r.EmptyMessage\x12\x1f\n\x08\x66ield_12\x18\x0c \x01(\x0b\x32\r.EmptyMessage\"\x0e\n\x0c\x45mptyMessageb\x06proto3'
@@ -92,9 +82,6 @@ try:
 except:
     pass
 
-# ==========================================
-# 3. COMMON HELPERS
-# ==========================================
 def encrypt_aes(data_bytes):
     """Legacy helper"""
     cipher = AES.new(KEY, AES.MODE_CBC, IV)
@@ -105,9 +92,6 @@ def encrypt_data(data_bytes):
     """New helper (Identical logic)"""
     return encrypt_aes(data_bytes)
 
-# ==========================================
-# 4. LEGACY LOGIC (For UI & /long_bio)
-# ==========================================
 def extract_info_legacy(token):
     try:
         if not token: return "Unknown", "Unknown"
@@ -119,7 +103,6 @@ def extract_info_legacy(token):
         return "Unknown", "Unknown Player"
 
 def get_jwt_from_api(uid=None, password=None, access_token=None):
-    # --- HELPER: Fetch Open ID via reward.ff & topup.pk ---
     def fetch_open_id(acc_token):
         try:
             uid_url = "https://prod-api.reward.ff.garena.com/redemption/api/auth/inspect_token/"
@@ -148,7 +131,6 @@ def get_jwt_from_api(uid=None, password=None, access_token=None):
         except: 
             return None
 
-    # --- STEP 1: Process Input Credentials ---
     final_acc_token = None
     final_open_id = None
 
@@ -179,7 +161,6 @@ def get_jwt_from_api(uid=None, password=None, access_token=None):
     else:
         return None, "No credentials provided"
 
-    # --- STEP 2: Fast Local JWT Generation (MajorLogin) ---
     try:
         import my_pb2, output_pb2
         platforms =[8, 3, 4, 6]
@@ -211,7 +192,6 @@ def get_jwt_from_api(uid=None, password=None, access_token=None):
                 game_data.field_99 = str(p_type)
                 game_data.field_100 = str(p_type)
 
-                # Encrypting data using your existing main script logic
                 edata = encrypt_data(game_data.SerializeToString())
                 
                 url = "https://loginbp.ggblueshark.com/MajorLogin"
@@ -275,7 +255,6 @@ def decode_jwt_info(token):
         return None, None, None
 
 def perform_major_login(access_token, open_id):
-    # This requires my_pb2 and output_pb2 to be present in the directory
     try:
         import my_pb2
         import output_pb2
@@ -391,21 +370,15 @@ def upload_bio_request_new(jwt_token, bio_text):
     except Exception as e:
         return {"status": f"Error: {str(e)}", "code": 500, "bio": bio_text, "server_response": "N/A"}
 
-# ==========================================
-# 6. ROUTES
-# ==========================================
 
-# --- TOOL UI ---
 @app.route('/')
 def secure_app():
     return render_template_string(HTML_TOOL)
 
-# --- API DOCS PAGE ---
 @app.route('/api')
 def api_docs():
     return render_template_string(HTML_API_DOCS)
 
-# --- TOOL EXECUTION (UI POST - LEGACY) ---
 @app.route('/exec', methods=['POST'])
 def execute_web():
     try:
@@ -502,7 +475,6 @@ def fetch_open_id_cli(access_token):
     except Exception as e:
         return None
 
-# --- NEW PUBLIC API ENDPOINT (/bio) ---
 @app.route("/bio", methods=["GET", "POST"])
 def combined_bio_upload():
     bio = request.args.get("bio") or request.form.get("bio")
@@ -557,13 +529,11 @@ def combined_bio_upload():
         final_access_token = access_token
         
         try:
-            # 1. Fetch OpenID using the precise headers provided from the CLI
             final_open_id = fetch_open_id_cli(final_access_token)
             
             if not final_open_id:
                 return jsonify({"status": "❌ Invalid Access Token or Extract Failed", "code": 400}), 400
             
-            # 2. Perform Major Login locally to generate the JWT Token
             final_jwt = perform_major_login(final_access_token, final_open_id)
             
             if final_jwt:
@@ -606,9 +576,6 @@ def combined_bio_upload():
     return response
 
 
-# ==========================================
-# UI: API DOCUMENTATION PAGE (/api)
-# ==========================================
 HTML_API_DOCS = r"""
 <!DOCTYPE html>
 <html lang="en">
@@ -706,9 +673,6 @@ HTML_API_DOCS = r"""
 </html>
 """
 
-# ==========================================
-# UI: MAIN TOOL (/)
-# ==========================================
 HTML_TOOL = r"""
 <!DOCTYPE html>
 <html lang="en">
