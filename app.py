@@ -38,15 +38,15 @@ HEADERS_GAME = {
 }
 SERVERS = {
     "IND": "https://client.ind.freefiremobile.com/UpdateSocialBasicInfo",
-    "BD":  "https://clientbp.ggblueshark.com/UpdateSocialBasicInfo",
-    "SG":  "https://clientbp.ggblueshark.com/UpdateSocialBasicInfo",
+    "BD":  "https://clientbp.ggpolarbear.com/UpdateSocialBasicInfo",
+    "SG":  "https://clientbp.ggpolarbear.com/UpdateSocialBasicInfo",
     "BR":  "https://client.us.freefiremobile.com/UpdateSocialBasicInfo",
     "US":  "https://client.us.freefiremobile.com/UpdateSocialBasicInfo",
     "EU":  "https://clientbp.ggpolarbear.com/UpdateSocialBasicInfo",
 }
 
 FREEFIRE_UPDATE_URL = "https://client.ind.freefiremobile.com/UpdateSocialBasicInfo"
-MAJOR_LOGIN_URL = "https://loginbp.ggblueshark.com/MajorLogin"
+MAJOR_LOGIN_URL = "https://loginbp.ggpolarbear.com/MajorLogin"
 OAUTH_URL = "https://100067.connect.garena.com/oauth/guest/token/grant"
 FREEFIRE_VERSION = "OB53"
 
@@ -194,7 +194,7 @@ def get_jwt_from_api(uid=None, password=None, access_token=None):
 
                 edata = encrypt_data(game_data.SerializeToString())
                 
-                url = "https://loginbp.ggblueshark.com/MajorLogin"
+                url = "https://loginbp.ggpolarbear.com/MajorLogin"
                 headers = {
                     "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 9; ASUS_Z01QD Build/PI)",
                     "Connection": "Keep-Alive",
@@ -335,7 +335,7 @@ def perform_guest_login(uid, password):
         pass
     return None, None
 
-def upload_bio_request_new(jwt_token, bio_text):
+def upload_bio_request_new(jwt_token, bio_text, region=None):
     try:
         data = BioData()
         data.field_2 = 17
@@ -352,7 +352,10 @@ def upload_bio_request_new(jwt_token, bio_text):
         headers = BIO_HEADERS.copy()
         headers["Authorization"] = f"Bearer {jwt_token}"
 
-        resp = requests.post(FREEFIRE_UPDATE_URL, headers=headers, data=encrypted, timeout=20, verify=False)
+        # Dynamically pick the right server URL based on the region
+        url = SERVERS.get(region.upper(), SERVERS["IND"]) if region else SERVERS["IND"]
+
+        resp = requests.post(url, headers=headers, data=encrypted, timeout=20, verify=False)
 
         status_text = "Unknown"
         if resp.status_code == 200: status_text = "✅ Success"
@@ -369,7 +372,6 @@ def upload_bio_request_new(jwt_token, bio_text):
         }
     except Exception as e:
         return {"status": f"Error: {str(e)}", "code": 500, "bio": bio_text, "server_response": "N/A"}
-
 
 @app.route('/')
 def secure_app():
@@ -482,6 +484,7 @@ def combined_bio_upload():
     uid = request.args.get("uid") or request.form.get("uid")
     password = request.args.get("pass") or request.form.get("pass")
     access_token = request.form.get("access_token") or request.args.get("access_token") or request.form.get("access") or request.args.get("access")
+    region_param = request.args.get("region") or request.form.get("region")
     
     if not bio:
         return jsonify({"status": "❌ Error", "code": 400, "error": "Missing 'bio' parameter"}), 400
@@ -553,7 +556,10 @@ def combined_bio_upload():
     if not final_jwt:
         return jsonify({"status": "❌ JWT Generation Failed", "code": 500}), 500
 
-    result = upload_bio_request_new(final_jwt, bio)
+    # Use the provided region parameter, or fallback to the region decoded from the JWT
+    target_region = region_param or final_region
+
+    result = upload_bio_request_new(final_jwt, bio, target_region)
     
     response_data = {
         "Credit": "@spideyabd",
@@ -575,7 +581,6 @@ def combined_bio_upload():
     response.headers["Content-Type"] = "application/json"
     return response
 
-
 HTML_API_DOCS = r"""
 <!DOCTYPE html>
 <html lang="en">
@@ -595,19 +600,25 @@ HTML_API_DOCS = r"""
         .method.get { background: #10B981; } /* Emerald Green */
         .method.post { background: #3B82F6; } /* Blue */
         
-        /* Changed to normal font (Inter) instead of monospace */
         code { background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px; color: #22D3EE; font-family: 'Inter', sans-serif; font-size: 14px; }
         pre { background: #050505; padding: 15px; border-radius: 8px; overflow-x: auto; border: 1px solid var(--border); color: #ccc; white-space: pre-wrap; word-wrap: break-word; margin-top: 5px; margin-bottom: 15px; font-family: 'Inter', sans-serif; font-size: 13px; line-height: 1.5; }
         
         .param-title { color: #A78BFA; font-weight: 600; font-size: 14px; margin-top: 15px; display: block; }
         .footer { margin-top: 40px; text-align: center; color: #666; font-size: 14px; border-top: 1px solid var(--border); padding-top: 20px; }
         .footer a { color: var(--accent); text-decoration: none; }
+        .region-box { background: rgba(34, 211, 238, 0.05); border: 1px dashed rgba(34, 211, 238, 0.3); padding: 10px; border-radius: 8px; font-size: 13px; margin-bottom: 15px; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>API Documentation</h1>
-        <p>Welcome to the Free Fire Bio Injector Public API. The <code>/bio</code> endpoint supports robust login methods (Reward, Major Login, Shop2Game) and auto-detects regions. It accepts both <b>GET</b> and <b>POST</b> requests.</p>
+        <p>Welcome to the Free Fire Bio Injector Public API. The <code>/bio</code> endpoint supports robust login methods (Reward, Major Login, Shop2Game) and custom regions. It accepts both <b>GET</b> and <b>POST</b> requests.</p>
+
+        <div class="region-box">
+            <span style="color: #22D3EE; font-weight: 600;">🌍 Supported Regions (Optional param: region)</span><br>
+            Use: <code>IND</code> (India), <code>BD</code> (Bangladesh), <code>SG</code> (Singapore), <code>BR</code> (Brazil), <code>US</code> (USA/NA), <code>EU</code> (Europe).<br>
+            <span style="color: #A09CB9; font-size: 12px;">Note: If you don't pass a region, the API will try to auto-detect it from the token or default to IND.</span>
+        </div>
 
         <!-- GET METHOD SECTION -->
         <h2>1. GET Method (URL Parameters)</h2>
@@ -616,13 +627,13 @@ HTML_API_DOCS = r"""
             <p style="font-size: 13px; color: #A09CB9;">Pass the parameters directly in the URL. Best for quick tests and simple integrations.</p>
             
             <span class="param-title">Using Access Token (Recommended)</span>
-            <pre><span class="host-url"></span>/bio?bio={bio_text}&access_token={token}</pre>
+            <pre><span class="host-url"></span>/bio?bio={bio_text}&access_token={token}&region=IND</pre>
 
             <span class="param-title">Using UID & Password</span>
-            <pre><span class="host-url"></span>/bio?bio={bio_text}&uid={uid}&pass={password}</pre>
+            <pre><span class="host-url"></span>/bio?bio={bio_text}&uid={uid}&pass={password}&region=BD</pre>
 
             <span class="param-title">Using Direct JWT</span>
-            <pre><span class="host-url"></span>/bio?bio={bio_text}&jwt={jwt_token}</pre>
+            <pre><span class="host-url"></span>/bio?bio={bio_text}&jwt={jwt_token}&region=SG</pre>
         </div>
 
         <!-- POST METHOD SECTION -->
@@ -638,23 +649,24 @@ HTML_API_DOCS = r"""
             
             <div style="margin-bottom: 15px;">
                 <span style="font-size: 13px; color: #A09CB9; font-weight: 600;">Option 1: Access Token (Recommended)</span>
-                <pre style="margin-top: 6px;">access_token={token}&bio={bio_text}</pre>
+                <pre style="margin-top: 6px;">access_token={token}&bio={bio_text}&region=IND</pre>
             </div>
 
             <div style="margin-bottom: 15px;">
                 <span style="font-size: 13px; color: #A09CB9; font-weight: 600;">Option 2: UID & Password</span>
-                <pre style="margin-top: 6px;">uid={uid}&pass={password}&bio={bio_text}</pre>
+                <pre style="margin-top: 6px;">uid={uid}&pass={password}&bio={bio_text}&region=BD</pre>
             </div>
 
             <div style="margin-bottom: 5px;">
                 <span style="font-size: 13px; color: #A09CB9; font-weight: 600;">Option 3: Direct JWT</span>
-                <pre style="margin-top: 6px;">jwt={jwt_token}&bio={bio_text}</pre>
+                <pre style="margin-top: 6px;">jwt={jwt_token}&bio={bio_text}&region=SG</pre>
             </div>
             
             <span class="param-title">cURL Example:</span>
             <pre>curl -X POST <span class="host-url"></span>/bio \
      -d "bio=[b][FF0000]King Spidey" \
-     -d "access_token=your_garena_access_token"</pre>
+     -d "access_token=your_garena_access_token" \
+     -d "region=IND"</pre>
         </div>
 
         <div class="footer">
